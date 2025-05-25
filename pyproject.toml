@@ -1,0 +1,14 @@
+[project]
+name = "ComfyUI_EmbeddingToolkit"
+description = "Toolkit for creating embeddings for various models in ComfyUI."
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/silveroxides/ComfyUI_EmbeddingToolkit"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = "silveroxides"
+DisplayName = "ComfyUI_EmbeddingToolkit"
+Icon = ""
