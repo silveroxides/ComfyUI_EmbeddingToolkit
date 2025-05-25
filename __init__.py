@@ -36,7 +36,7 @@ class SaveTokenEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
         
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 't5xxl': 't5xxl'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -102,7 +102,7 @@ class SaveTokenEmbeddings:
             final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
             
             # --- CORRECTED KEY NAMING ---
-            if key_suffix == 't5xxl':
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
                 save_key_in_file = key_suffix  # Use 't5xxl' directly
             else:
                 save_key_in_file = f"clip_{key_suffix}" # Use 'clip_l', 'clip_g'
@@ -172,7 +172,7 @@ class SaveWeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
         
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 't5xxl': 't5xxl'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -277,7 +277,7 @@ class SaveWeightedEmbeddings:
             final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
             
             # --- CORRECTED KEY NAMING ---
-            if key_suffix == 't5xxl':
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
                 save_key_in_file = key_suffix  # Use 't5xxl' directly
             else:
                 save_key_in_file = f"clip_{key_suffix}" # Use 'clip_l', 'clip_g'
@@ -346,7 +346,7 @@ class SaveA1111WeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
         
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 't5xxl': 't5xxl'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -427,7 +427,7 @@ class SaveA1111WeightedEmbeddings:
 
             final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
             
-            if key_suffix == 't5xxl':
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
