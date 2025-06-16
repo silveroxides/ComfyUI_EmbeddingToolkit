@@ -9,8 +9,6 @@ class SaveTokenEmbeddings:
         if not self.output_dir_list:
             print("SaveTokenEmbeddings: Warning: 'embeddings' folder type not found. Falling back to main output directory.")
             self.output_dir_list = [folder_paths.get_output_directory()]
-        os.makedirs(self.output_dir_list[0], exist_ok=True)
-
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -93,28 +91,12 @@ class SaveTokenEmbeddings:
             for s in range(num_segments):
                 current_segment_embeds = embeds_out_full[s]
                 current_segment_mask = attention_mask_full[s]
-                actual_embeddings_this_segment_masked = current_segment_embeds[current_segment_mask == 1]
-
-                processed_segment = actual_embeddings_this_segment_masked
-                num_tokens_in_segment_after_mask = processed_segment.shape[0]
-
-                if num_tokens_in_segment_after_mask > 0:
-                    if key_suffix == 'l' or key_suffix == 'g': # CLIP models (BOS and EOS)
-                        if num_tokens_in_segment_after_mask >= 2:
-                            processed_segment = processed_segment[1:-1]
-                        else:
-                            processed_segment = processed_segment[0:0]
-                    elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'): # T5 models (EOS only)
-                        if num_tokens_in_segment_after_mask >= 1:
-                            processed_segment = processed_segment[:-1]
-                        else:
-                            processed_segment = processed_segment[0:0]
-
-                if processed_segment.shape[0] > 0:
-                    all_actual_embeddings_for_this_clip_part.append(processed_segment)
+                actual_embeddings_this_segment = current_segment_embeds[current_segment_mask == 1]
+                if actual_embeddings_this_segment.shape[0] > 0:
+                    all_actual_embeddings_for_this_clip_part.append(actual_embeddings_this_segment)
 
             if not all_actual_embeddings_for_this_clip_part:
-                print(f"SaveTokenEmbeddings: Warning: No actual tokens for '{key_suffix}' after special token removal. Skipping.")
+                print(f"SaveTokenEmbeddings: Warning: No actual tokens for '{key_suffix}'. Skipping.")
                 continue
 
             final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
@@ -134,8 +116,8 @@ class SaveTokenEmbeddings:
         subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
-
-        os.makedirs(full_output_folder, exist_ok=True) # Ensures the target folder exists
+        if subfolder_in_prefix:
+            os.makedirs(full_output_folder, exist_ok=True)
 
         metadata = {}
         counter = 1
@@ -161,7 +143,6 @@ class SaveWeightedEmbeddings:
         if not self.output_dir_list:
             print("SaveWeightedEmbeddings: Warning: 'embeddings' folder type not found. Falling back to main output directory.")
             self.output_dir_list = [folder_paths.get_output_directory()]
-        os.makedirs(self.output_dir_list[0], exist_ok=True)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -179,7 +160,8 @@ class SaveWeightedEmbeddings:
     CATEGORY = "EmbeddingToolkit"
 
     def save_weighted_embeddings(self, clip, text, filename_prefix):
-        if clip is None: raise RuntimeError("CLIP input is None.")
+        if clip is None:
+            raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
             print("SaveWeightedEmbeddings: Error: clip.cond_stage_model is None.")
             return {"ui": {"text": ["Error: CLIP's cond_stage_model is None."]}}
@@ -195,8 +177,14 @@ class SaveWeightedEmbeddings:
                 model_instance = getattr(actual_clip_model_wrapper, attr_name)
                 if model_instance is not None and hasattr(model_instance, "process_tokens") and hasattr(model_instance, "transformer"):
                     sd_clip_instances[key_suffix] = model_instance
+                else:
+                    if model_instance is None:
+                        print(f"SaveWeightedEmbeddings: Warning: Attribute '{attr_name}' is None. Skipping '{key_suffix}'.")
+                    else:
+                        print(f"SaveWeightedEmbeddings: Warning: Attribute '{attr_name}' (type {type(model_instance)}) is not a valid SDClipModel. Skipping '{key_suffix}'.")
 
         if not sd_clip_instances and hasattr(actual_clip_model_wrapper, "process_tokens") and hasattr(actual_clip_model_wrapper, "transformer"):
+            print(f"SaveWeightedEmbeddings: Warning: No standard attributes. Fallback: cond_stage_model as 'l'.")
             sd_clip_instances['l'] = actual_clip_model_wrapper
 
         if not sd_clip_instances:
@@ -215,22 +203,34 @@ class SaveWeightedEmbeddings:
                 print(f"SaveWeightedEmbeddings: Warning: No token data for '{key_suffix}'. Skipping.")
                 continue
 
+            if not hasattr(sd_clip_model_inst, 'transformer') or sd_clip_model_inst.transformer is None:
+                 print(f"SaveWeightedEmbeddings: Error: SDClipModel for '{key_suffix}' has invalid 'transformer'. Skipping.")
+                 continue
             device = sd_clip_model_inst.transformer.get_input_embeddings().weight.device
-            prompt_token_id_segments = [[item[0] for item in seg] for seg in current_prompt_segments_with_weights]
-            if not prompt_token_id_segments: continue
 
-            max_len_for_empty = getattr(sd_clip_model_inst, 'max_length', 77)
+            prompt_token_id_segments = []
+            max_segment_len = 0
+            for segment_w_weights in current_prompt_segments_with_weights:
+                prompt_token_id_segments.append([item[0] for item in segment_w_weights])
+                max_segment_len = max(max_segment_len, len(segment_w_weights))
+
+            if not prompt_token_id_segments:
+                print(f"SaveWeightedEmbeddings: Warning: No token ID segments for '{key_suffix}'. Skipping.")
+                continue
+
             empty_token_sequence = []
-            if hasattr(sd_clip_model_inst, "gen_empty_tokens"):
-                empty_token_sequence = sd_clip_model_inst.gen_empty_tokens(max_len_for_empty)
+            if hasattr(sd_clip_model_inst, "gen_empty_tokens") and hasattr(sd_clip_model_inst, "special_tokens"):
+                empty_token_sequence = sd_clip_model_inst.gen_empty_tokens(sd_clip_model_inst.special_tokens, max_segment_len)
             else:
-                pad_token_id = getattr(sd_clip_model_inst, 'pad_token_id', None)
-                if pad_token_id is None and hasattr(sd_clip_model_inst, "special_tokens") and "pad" in sd_clip_model_inst.special_tokens:
+                pad_token_id = None
+                if hasattr(sd_clip_model_inst, "special_tokens") and "pad" in sd_clip_model_inst.special_tokens:
                     pad_token_id = sd_clip_model_inst.special_tokens["pad"]
+
                 if pad_token_id is not None:
-                    empty_token_sequence = [pad_token_id] * max_len_for_empty
+                    print(f"SaveWeightedEmbeddings: Warning: '{key_suffix}' SDClipModel instance missing 'gen_empty_tokens' or 'special_tokens'. Using simple pad token sequence for empty.")
+                    empty_token_sequence = [pad_token_id] * max_segment_len
                 else:
-                    print(f"SaveWeightedEmbeddings: Error: Cannot determine pad/empty token for '{key_suffix}'. Skipping weighting for this part.")
+                    print(f"SaveWeightedEmbeddings: Error: Cannot determine pad token for '{key_suffix}'. Skipping weighting for this part.")
                     continue
 
             all_token_sequences_for_process_tokens = prompt_token_id_segments + [empty_token_sequence]
@@ -248,50 +248,39 @@ class SaveWeightedEmbeddings:
                 current_segment_raw_embeds = prompt_embeds_full_segments[s_idx]
                 segment_data_from_tokenizer = current_prompt_segments_with_weights[s_idx]
                 current_segment_mask_from_process_tokens = prompt_attention_mask_full_segments[s_idx]
-
                 weighted_segment_embeds = torch.zeros_like(current_segment_raw_embeds)
-                content_token_offset = 1 if (key_suffix == 'l' or key_suffix == 'g') else 0
 
-                for token_idx_in_padded_seq in range(current_segment_raw_embeds.shape[0]):
-                    is_active_token_in_mask = current_segment_mask_from_process_tokens[token_idx_in_padded_seq] == 1
-                    original_embedding_at_pos = current_segment_raw_embeds[token_idx_in_padded_seq]
-                    embed_empty_for_this_pos = embeds_empty_segment_full[0, token_idx_in_padded_seq]
+                for token_idx in range(current_segment_raw_embeds.shape[0]):
+                    is_active_token = current_segment_mask_from_process_tokens[token_idx] == 1
+                    original_embedding = current_segment_raw_embeds[token_idx]
+                    embed_empty_for_this_pos = embeds_empty_segment_full[0, token_idx]
 
-                    if is_active_token_in_mask:
-                        weight = 1.0
-                        original_token_idx_for_weight = token_idx_in_padded_seq - content_token_offset
-                        if original_token_idx_for_weight >= 0 and original_token_idx_for_weight < len(segment_data_from_tokenizer):
-                            weight = segment_data_from_tokenizer[original_token_idx_for_weight][1]
-
+                    if is_active_token:
+                        weight = segment_data_from_tokenizer[token_idx][1] if token_idx < len(segment_data_from_tokenizer) else 1.0
                         if weight == 1.0:
-                            weighted_segment_embeds[token_idx_in_padded_seq] = original_embedding_at_pos
+                            weighted_segment_embeds[token_idx] = original_embedding
                         else:
-                            weighted_segment_embeds[token_idx_in_padded_seq] = (original_embedding_at_pos - embed_empty_for_this_pos) * weight + embed_empty_for_this_pos
+                            weighted_segment_embeds[token_idx] = (original_embedding - embed_empty_for_this_pos) * weight + embed_empty_for_this_pos
                     else:
-                        weighted_segment_embeds[token_idx_in_padded_seq] = original_embedding_at_pos
+                        weighted_segment_embeds[token_idx] = original_embedding
 
-                actual_weighted_embeddings_this_segment_masked = weighted_segment_embeds[current_segment_mask_from_process_tokens == 1]
-
-                processed_segment = actual_weighted_embeddings_this_segment_masked
-                num_tokens_in_segment_after_mask = processed_segment.shape[0]
-
-                if num_tokens_in_segment_after_mask > 0:
-                    if key_suffix == 'l' or key_suffix == 'g':
-                        if num_tokens_in_segment_after_mask >= 2: processed_segment = processed_segment[1:-1]
-                        else: processed_segment = processed_segment[0:0]
-                    elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                        if num_tokens_in_segment_after_mask >= 1: processed_segment = processed_segment[:-1]
-                        else: processed_segment = processed_segment[0:0]
-
-                if processed_segment.shape[0] > 0:
-                    all_weighted_actual_embeddings_for_this_clip_part.append(processed_segment)
+                actual_weighted_embeddings_this_segment = weighted_segment_embeds[current_segment_mask_from_process_tokens == 1]
+                if actual_weighted_embeddings_this_segment.shape[0] > 0:
+                    all_weighted_actual_embeddings_for_this_clip_part.append(actual_weighted_embeddings_this_segment)
 
             if not all_weighted_actual_embeddings_for_this_clip_part:
-                print(f"SaveWeightedEmbeddings: Warning: No actual weighted tokens for '{key_suffix}' after special token removal. Skipping.")
+                print(f"SaveWeightedEmbeddings: Warning: No actual weighted tokens for '{key_suffix}'. Skipping.")
                 continue
 
             final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
-            save_key_in_file = key_suffix if (key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile')) else f"clip_{key_suffix}"
+
+            # --- CORRECTED KEY NAMING ---
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                save_key_in_file = key_suffix  # Use 't5xxl' directly
+            else:
+                save_key_in_file = f"clip_{key_suffix}" # Use 'clip_l', 'clip_g'
+            # --- END CORRECTION ---
+
             tensors_to_save[save_key_in_file] = final_embeddings_for_this_clip_part.cpu()
             print(f"SaveWeightedEmbeddings: Processed weighted for '{save_key_in_file}': shape {final_embeddings_for_this_clip_part.shape}")
 
@@ -302,7 +291,8 @@ class SaveWeightedEmbeddings:
         subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
-        os.makedirs(full_output_folder, exist_ok=True)
+        if subfolder_in_prefix:
+            os.makedirs(full_output_folder, exist_ok=True)
 
         metadata = {}
         counter = 1
@@ -321,13 +311,12 @@ class SaveWeightedEmbeddings:
         comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
         return {"ui": {"text": [f"Saved weighted to {save_path}"]}}
 
-
 class SaveA1111WeightedEmbeddings:
     def __init__(self):
         self.output_dir_list = folder_paths.get_folder_paths("embeddings")
         if not self.output_dir_list:
+            print("SaveA1111WeightedEmbeddings: Warning: 'embeddings' folder type not found. Falling back to main output directory.")
             self.output_dir_list = [folder_paths.get_output_directory()]
-        os.makedirs(self.output_dir_list[0], exist_ok=True)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -345,7 +334,8 @@ class SaveA1111WeightedEmbeddings:
     CATEGORY = "EmbeddingToolkit"
 
     def save_a1111_weighted_embeddings(self, clip, text, filename_prefix):
-        if clip is None: raise RuntimeError("CLIP input is None.")
+        if clip is None:
+            raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
             print("SaveA1111WeightedEmbeddings: Error: clip.cond_stage_model is None.")
             return {"ui": {"text": ["Error: CLIP's cond_stage_model is None."]}}
@@ -355,13 +345,21 @@ class SaveA1111WeightedEmbeddings:
 
         sd_clip_instances = {}
         potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
+
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
                 model_instance = getattr(actual_clip_model_wrapper, attr_name)
                 if model_instance is not None and hasattr(model_instance, "process_tokens") and hasattr(model_instance, "transformer"):
                     sd_clip_instances[key_suffix] = model_instance
+                else:
+                    if model_instance is None:
+                        print(f"SaveA1111WeightedEmbeddings: Warning: Attribute '{attr_name}' is None. Skipping '{key_suffix}'.")
+                    else: print(f"SaveA1111WeightedEmbeddings: Warning: Attribute '{attr_name}' (type {type(model_instance)}) is not a valid SDClipModel. Skipping '{key_suffix}'.")
+
         if not sd_clip_instances and hasattr(actual_clip_model_wrapper, "process_tokens") and hasattr(actual_clip_model_wrapper, "transformer"):
-             sd_clip_instances['l'] = actual_clip_model_wrapper
+            print(f"SaveA1111WeightedEmbeddings: Warning: No standard attributes. Fallback: cond_stage_model as 'l'.")
+            sd_clip_instances['l'] = actual_clip_model_wrapper
+
         if not sd_clip_instances:
             print(f"SaveA1111WeightedEmbeddings: Error: No valid SDClipModel instances found.")
             return {"ui": {"text": ["Error: No valid SDClipModel instances found."]}}
@@ -374,11 +372,22 @@ class SaveA1111WeightedEmbeddings:
             elif key_suffix == 'l' and not isinstance(tokenized_text_with_weights, dict):
                 current_prompt_segments_with_weights = tokenized_text_with_weights
 
-            if not current_prompt_segments_with_weights: continue
+            if not current_prompt_segments_with_weights:
+                print(f"SaveA1111WeightedEmbeddings: Warning: No token data for '{key_suffix}'. Skipping.")
+                continue
 
+            if not hasattr(sd_clip_model_inst, 'transformer') or sd_clip_model_inst.transformer is None:
+                 print(f"SaveA1111WeightedEmbeddings: Error: SDClipModel for '{key_suffix}' has invalid 'transformer'. Skipping.")
+                 continue
             device = sd_clip_model_inst.transformer.get_input_embeddings().weight.device
-            prompt_token_id_segments = [[item[0] for item in seg] for seg in current_prompt_segments_with_weights]
-            if not prompt_token_id_segments: continue
+
+            prompt_token_id_segments = []
+            for segment_w_weights in current_prompt_segments_with_weights:
+                prompt_token_id_segments.append([item[0] for item in segment_w_weights])
+
+            if not prompt_token_id_segments:
+                print(f"SaveA1111WeightedEmbeddings: Warning: No token ID segments for '{key_suffix}'. Skipping.")
+                continue
 
             embeds_out_full, attention_mask_full, _ = sd_clip_model_inst.process_tokens(
                 prompt_token_id_segments, device
@@ -393,42 +402,36 @@ class SaveA1111WeightedEmbeddings:
                 current_segment_mask_from_process_tokens = attention_mask_full[s_idx]
 
                 scaled_segment_embeds = torch.zeros_like(current_segment_raw_embeds)
-                content_token_offset = 1 if (key_suffix == 'l' or key_suffix == 'g') else 0
 
-                for token_idx_in_padded_seq in range(current_segment_raw_embeds.shape[0]):
-                    is_active_token_in_mask = current_segment_mask_from_process_tokens[token_idx_in_padded_seq] == 1
-                    original_embedding_at_pos = current_segment_raw_embeds[token_idx_in_padded_seq]
+                for token_idx in range(current_segment_raw_embeds.shape[0]):
+                    is_active_token = current_segment_mask_from_process_tokens[token_idx] == 1
+                    original_embedding = current_segment_raw_embeds[token_idx]
 
-                    if is_active_token_in_mask:
-                        weight = 1.0
-                        original_token_idx_for_weight = token_idx_in_padded_seq - content_token_offset
-                        if original_token_idx_for_weight >= 0 and original_token_idx_for_weight < len(segment_data_from_tokenizer):
-                            weight = segment_data_from_tokenizer[original_token_idx_for_weight][1]
-                        scaled_segment_embeds[token_idx_in_padded_seq] = original_embedding_at_pos * weight
+                    if is_active_token:
+                        weight = segment_data_from_tokenizer[token_idx][1] if token_idx < len(segment_data_from_tokenizer) else 1.0
+
+                        scaled_segment_embeds[token_idx] = original_embedding * weight
                     else:
-                        scaled_segment_embeds[token_idx_in_padded_seq] = original_embedding_at_pos
+                        scaled_segment_embeds[token_idx] = original_embedding
 
-                actual_scaled_embeddings_this_segment_masked = scaled_segment_embeds[current_segment_mask_from_process_tokens == 1]
+                actual_scaled_embeddings_this_segment = scaled_segment_embeds[current_segment_mask_from_process_tokens == 1]
 
-                processed_segment = actual_scaled_embeddings_this_segment_masked
-                num_tokens_in_segment_after_mask = processed_segment.shape[0]
-                if num_tokens_in_segment_after_mask > 0:
-                    if key_suffix == 'l' or key_suffix == 'g':
-                        if num_tokens_in_segment_after_mask >= 2: processed_segment = processed_segment[1:-1]
-                        else: processed_segment = processed_segment[0:0]
-                    elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                        if num_tokens_in_segment_after_mask >= 1: processed_segment = processed_segment[:-1]
-                        else: processed_segment = processed_segment[0:0]
+                if actual_scaled_embeddings_this_segment.shape[0] > 0:
+                    all_scaled_actual_embeddings_for_this_clip_part.append(actual_scaled_embeddings_this_segment)
 
-                if processed_segment.shape[0] > 0:
-                    all_scaled_actual_embeddings_for_this_clip_part.append(processed_segment)
-
-            if not all_scaled_actual_embeddings_for_this_clip_part: continue
+            if not all_scaled_actual_embeddings_for_this_clip_part:
+                print(f"SaveA1111WeightedEmbeddings: Warning: No actual scaled tokens found for '{key_suffix}' after processing. Skipping.")
+                continue
 
             final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
-            save_key_in_file = key_suffix if (key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile')) else f"clip_{key_suffix}"
+
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                save_key_in_file = key_suffix
+            else:
+                save_key_in_file = f"clip_{key_suffix}"
+
             tensors_to_save[save_key_in_file] = final_embeddings_for_this_clip_part.cpu()
-            print(f"SaveA1111WeightedEmbeddings: Processed A1111-style for '{save_key_in_file}': shape {final_embeddings_for_this_clip_part.shape}")
+            print(f"SaveA1111WeightedEmbeddings: Processed A1111-style weighted for '{save_key_in_file}': shape {final_embeddings_for_this_clip_part.shape}")
 
         if not tensors_to_save:
             print("SaveA1111WeightedEmbeddings: Error: No A1111-style weighted embeddings generated.")
@@ -437,7 +440,8 @@ class SaveA1111WeightedEmbeddings:
         subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
-        os.makedirs(full_output_folder, exist_ok=True)
+        if subfolder_in_prefix:
+            os.makedirs(full_output_folder, exist_ok=True)
 
         metadata = {}
         counter = 1
@@ -477,7 +481,7 @@ class SliceExistingEmbedding:
             print(f"SliceExistingEmbedding: Error listing embedding files: {e}")
             embedding_files = ["None"]
 
-        if not embedding_files: # Ensure there's at least one option
+        if not embedding_files:
             embedding_files = ["None"]
 
         return {
@@ -548,7 +552,7 @@ class SliceExistingEmbedding:
                 if num_tokens >= 2:
                     processed_tensor = tensor[1:-1]
                     any_sliced = True
-                elif num_tokens > 0 : # e.g. only 1 token
+                elif num_tokens > 0 :
                     processed_tensor = tensor[0:0]
                     any_sliced = True
                 print(f"  Resulting shape: {processed_tensor.shape}")
