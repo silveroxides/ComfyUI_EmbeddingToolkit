@@ -36,7 +36,7 @@ class SaveTokenEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -82,9 +82,10 @@ class SaveTokenEmbeddings:
                 print(f"SaveTokenEmbeddings: Warning: No token ID segments for '{key_suffix}'. Skipping.")
                 continue
 
-            embeds_out_full, attention_mask_full, _ = sd_clip_model_inst.process_tokens(
+            embeds_out_full, attention_mask_full, num_tokens, embeds_info = sd_clip_model_inst.process_tokens(
                 tokens_for_process_tokens_method, device
             )
+            print(f"Returned values: num_tokens={num_tokens}, embeds_info={embeds_info}")
 
             all_actual_embeddings_for_this_clip_part = []
             num_segments = embeds_out_full.shape[0]
@@ -101,7 +102,21 @@ class SaveTokenEmbeddings:
 
             final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+            if key_suffix == 'l' or key_suffix == 'g':
+                if num_tokens_in_final >= 2:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                elif num_tokens_in_final > 0:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                if num_tokens_in_final >= 1:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+
+            if final_embeddings_for_this_clip_part.shape[0] == 0:
+                print(f"SaveTokenEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
+                continue
+
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -170,7 +185,7 @@ class SaveWeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -234,9 +249,10 @@ class SaveWeightedEmbeddings:
                     continue
 
             all_token_sequences_for_process_tokens = prompt_token_id_segments + [empty_token_sequence]
-            embeds_combined, attention_mask_combined, _ = sd_clip_model_inst.process_tokens(
+            embeds_combined, attention_mask_combined, num_tokens, embeds_info = sd_clip_model_inst.process_tokens(
                 all_token_sequences_for_process_tokens, device
             )
+            print(f"Returned values: num_tokens={num_tokens}, embeds_info={embeds_info}")
 
             num_prompt_segments = len(prompt_token_id_segments)
             prompt_embeds_full_segments = embeds_combined[:num_prompt_segments]
@@ -274,12 +290,24 @@ class SaveWeightedEmbeddings:
 
             final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
 
-            # --- CORRECTED KEY NAMING ---
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                save_key_in_file = key_suffix  # Use 't5xxl' directly
+            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+            if key_suffix == 'l' or key_suffix == 'g':
+                if num_tokens_in_final >= 2:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                elif num_tokens_in_final > 0:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                if num_tokens_in_final >= 1:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+
+            if final_embeddings_for_this_clip_part.shape[0] == 0:
+                print(f"SaveWeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
+                continue
+
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+                save_key_in_file = key_suffix
             else:
-                save_key_in_file = f"clip_{key_suffix}" # Use 'clip_l', 'clip_g'
-            # --- END CORRECTION ---
+                save_key_in_file = f"clip_{key_suffix}"
 
             tensors_to_save[save_key_in_file] = final_embeddings_for_this_clip_part.cpu()
             print(f"SaveWeightedEmbeddings: Processed weighted for '{save_key_in_file}': shape {final_embeddings_for_this_clip_part.shape}")
@@ -344,7 +372,7 @@ class SaveA1111WeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -389,9 +417,10 @@ class SaveA1111WeightedEmbeddings:
                 print(f"SaveA1111WeightedEmbeddings: Warning: No token ID segments for '{key_suffix}'. Skipping.")
                 continue
 
-            embeds_out_full, attention_mask_full, _ = sd_clip_model_inst.process_tokens(
+            embeds_out_full, attention_mask_full, num_tokens, embeds_info = sd_clip_model_inst.process_tokens(
                 prompt_token_id_segments, device
             )
+            print(f"Returned values: num_tokens={num_tokens}, embeds_info={embeds_info}")
 
             all_scaled_actual_embeddings_for_this_clip_part = []
             num_prompt_segments = embeds_out_full.shape[0]
@@ -425,7 +454,21 @@ class SaveA1111WeightedEmbeddings:
 
             final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+            if key_suffix == 'l' or key_suffix == 'g':
+                if num_tokens_in_final >= 2:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                elif num_tokens_in_final > 0:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                if num_tokens_in_final >= 1:
+                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+
+            if final_embeddings_for_this_clip_part.shape[0] == 0:
+                print(f"SaveA1111WeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
+                continue
+
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -463,7 +506,6 @@ class SaveA1111WeightedEmbeddings:
 
 class SliceExistingEmbedding:
     def __init__(self):
-        # Get the primary "embeddings" directory
         self.embeddings_dir_paths = folder_paths.get_folder_paths("embeddings")
         if not self.embeddings_dir_paths:
             print("SliceExistingEmbedding: Warning: 'embeddings' folder type not found. Falling back to main output directory.")
@@ -473,9 +515,7 @@ class SliceExistingEmbedding:
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Use folder_paths.get_filename_list to populate choices for the dropdown
         try:
-            # Get filenames relative to the "embeddings" type paths
             embedding_files = [f for f in folder_paths.get_filename_list("embeddings") if f.lower().endswith((".safetensors", ".pt"))]
         except Exception as e:
             print(f"SliceExistingEmbedding: Error listing embedding files: {e}")
@@ -486,7 +526,7 @@ class SliceExistingEmbedding:
 
         return {
             "required": {
-                "embedding_file": (embedding_files,), # Dropdown with detected embedding files
+                "embedding_file": (embedding_files,),
                 "output_filename_prefix": ("STRING", {"default": "sliced_embedding"}),
             }
         }
@@ -501,14 +541,9 @@ class SliceExistingEmbedding:
             print("SliceExistingEmbedding: No embedding file selected.")
             return {"ui": {"text": ["No embedding file selected."]}}
 
-        # Resolve the full path to the selected embedding file
-        # folder_paths.get_full_path expects a folder_type and a relative filename
         full_file_path = folder_paths.get_full_path("embeddings", embedding_file)
 
         if full_file_path is None or not os.path.exists(full_file_path):
-            # Fallback if get_full_path returns None (e.g., file not in registered paths)
-            # or if the file just doesn't exist (could happen if list is stale)
-            # Try constructing path directly from primary_embeddings_dir as a last resort
             potential_path = os.path.join(self.primary_embeddings_dir, embedding_file)
             if os.path.exists(potential_path):
                 full_file_path = potential_path
@@ -518,8 +553,6 @@ class SliceExistingEmbedding:
 
         try:
             loaded_data = comfy.utils.load_torch_file(full_file_path)
-            # Safetensors can have metadata in a special key, or PT files might not.
-            # We should preserve it if it exists.
             metadata_key = "__metadata__"
             file_metadata = {}
             if isinstance(loaded_data, dict) and metadata_key in loaded_data:
@@ -561,7 +594,6 @@ class SliceExistingEmbedding:
                 if num_tokens >= 1:
                     processed_tensor = tensor[:-1]
                     any_sliced = True
-                # if num_tokens == 0, it remains tensor[0:0] effectively
                 print(f"  Resulting shape: {processed_tensor.shape}")
             else:
                 print(f"SliceExistingEmbedding: Info: Key '{key}' does not match known slicing patterns. Tensor will not be sliced.")
@@ -573,14 +605,12 @@ class SliceExistingEmbedding:
             print(f"SliceExistingEmbedding: {msg}")
             return {"ui": {"text": [msg]}}
 
-        # Standard filename saving logic (adopted from other save nodes)
         subfolder_in_prefix, filename_base_from_prefix = os.path.split(output_filename_prefix)
 
-        # Output will be in the primary "embeddings" directory, respecting any subfolder in the prefix
         output_target_folder = os.path.join(self.primary_embeddings_dir, subfolder_in_prefix)
         os.makedirs(output_target_folder, exist_ok=True)
 
-        _, input_ext = os.path.splitext(embedding_file) # Preserve original extension if desired, or default to .safetensors
+        _, input_ext = os.path.splitext(embedding_file)
         output_ext = input_ext if input_ext.lower() in [".safetensors", ".pt"] else ".safetensors"
 
         counter = 1
@@ -601,10 +631,9 @@ class SliceExistingEmbedding:
                 return {"ui": {"text": [f"Error: {msg}"]}}
 
         try:
-            # Add back metadata if it was present
             if file_metadata:
                 sliced_tensors[metadata_key] = file_metadata
-            comfy.utils.save_torch_file(sliced_tensors, final_save_path) # Let save_torch_file handle metadata if it's smart, else it's saved as a normal key
+            comfy.utils.save_torch_file(sliced_tensors, final_save_path)
             msg = f"Saved sliced embedding to {final_save_path}"
             print(f"SliceExistingEmbedding: {msg}")
             return {"ui": {"text": [msg]}}
