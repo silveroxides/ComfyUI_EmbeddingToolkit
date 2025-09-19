@@ -16,6 +16,7 @@ class SaveTokenEmbeddings:
             "required": {
                 "clip": ("CLIP",),
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
+                "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "token_embeds"}),
             }
         }
@@ -25,7 +26,7 @@ class SaveTokenEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_token_embeddings(self, clip, text, filename_prefix):
+    def save_token_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -100,17 +101,20 @@ class SaveTokenEmbeddings:
                 print(f"SaveTokenEmbeddings: Warning: No actual tokens for '{key_suffix}'. Skipping.")
                 continue
 
-            final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
-
-            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
-            if key_suffix == 'l' or key_suffix == 'g':
-                if num_tokens_in_final >= 2:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
-                elif num_tokens_in_final > 0:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
-            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                if num_tokens_in_final >= 1:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            if slice_bos_eos:
+                final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
+    
+                num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+                if key_suffix == 'l' or key_suffix == 'g':
+                    if num_tokens_in_final >= 2:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                    elif num_tokens_in_final > 0:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+                elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                    if num_tokens_in_final >= 1:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            else:
+                final_embeddings_for_this_clip_part = torch.cat(all_actual_embeddings_for_this_clip_part, dim=0)
 
             if final_embeddings_for_this_clip_part.shape[0] == 0:
                 print(f"SaveTokenEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
@@ -165,6 +169,7 @@ class SaveWeightedEmbeddings:
             "required": {
                 "clip": ("CLIP",),
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
+                "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "weighted_embed"}),
             }
         }
@@ -174,7 +179,7 @@ class SaveWeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_weighted_embeddings(self, clip, text, filename_prefix):
+    def save_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -288,17 +293,20 @@ class SaveWeightedEmbeddings:
                 print(f"SaveWeightedEmbeddings: Warning: No actual weighted tokens for '{key_suffix}'. Skipping.")
                 continue
 
-            final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
-
-            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
-            if key_suffix == 'l' or key_suffix == 'g':
-                if num_tokens_in_final >= 2:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
-                elif num_tokens_in_final > 0:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
-            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                if num_tokens_in_final >= 1:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            if slice_bos_eos:
+                final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
+    
+                num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+                if key_suffix == 'l' or key_suffix == 'g':
+                    if num_tokens_in_final >= 2:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                    elif num_tokens_in_final > 0:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+                elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                    if num_tokens_in_final >= 1:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            else:
+                final_embeddings_for_this_clip_part = torch.cat(all_weighted_actual_embeddings_for_this_clip_part, dim=0)
 
             if final_embeddings_for_this_clip_part.shape[0] == 0:
                 print(f"SaveWeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
@@ -352,6 +360,7 @@ class SaveA1111WeightedEmbeddings:
             "required": {
                 "clip": ("CLIP",),
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
+                "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "a1111_weighted_embed"}),
             }
         }
@@ -361,7 +370,7 @@ class SaveA1111WeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_a1111_weighted_embeddings(self, clip, text, filename_prefix):
+    def save_a1111_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -452,17 +461,20 @@ class SaveA1111WeightedEmbeddings:
                 print(f"SaveA1111WeightedEmbeddings: Warning: No actual scaled tokens found for '{key_suffix}' after processing. Skipping.")
                 continue
 
-            final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
-
-            num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
-            if key_suffix == 'l' or key_suffix == 'g':
-                if num_tokens_in_final >= 2:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
-                elif num_tokens_in_final > 0:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
-            elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
-                if num_tokens_in_final >= 1:
-                    final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            if slice_bos_eos:
+                final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
+    
+                num_tokens_in_final = final_embeddings_for_this_clip_part.shape[0]
+                if key_suffix == 'l' or key_suffix == 'g':
+                    if num_tokens_in_final >= 2:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[1:-1]
+                    elif num_tokens_in_final > 0:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[0:0]
+                elif key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile'):
+                    if num_tokens_in_final >= 1:
+                        final_embeddings_for_this_clip_part = final_embeddings_for_this_clip_part[:-1]
+            else:
+                final_embeddings_for_this_clip_part = torch.cat(all_scaled_actual_embeddings_for_this_clip_part, dim=0)
 
             if final_embeddings_for_this_clip_part.shape[0] == 0:
                 print(f"SaveA1111WeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
