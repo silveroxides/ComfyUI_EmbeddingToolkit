@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI_EmbeddingToolkit"
 description = "Toolkit for creating embeddings for various models in ComfyUI."
-version = "1.0.2"
+version = "1.0.3"
 license = {file = "LICENSE"}
 
 [project.urls]
