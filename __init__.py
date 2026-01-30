@@ -37,7 +37,7 @@ class SaveTokenEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'mistral3_24b': 'mistral3_24b', 'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -120,7 +120,7 @@ class SaveTokenEmbeddings:
                 print(f"SaveTokenEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -190,7 +190,7 @@ class SaveWeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'mistral3_24b': 'mistral3_24b', 'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -312,7 +312,7 @@ class SaveWeightedEmbeddings:
                 print(f"SaveWeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -381,7 +381,7 @@ class SaveA1111WeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'mistral3_24b': 'mistral3_24b', 'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -480,7 +480,7 @@ class SaveA1111WeightedEmbeddings:
                 print(f"SaveA1111WeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
