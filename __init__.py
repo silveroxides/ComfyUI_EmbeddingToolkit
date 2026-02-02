@@ -207,6 +207,7 @@ class SaveTokenEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "token_embeds"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -215,7 +216,7 @@ class SaveTokenEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_token_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_token_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -329,28 +330,49 @@ class SaveTokenEmbeddings:
             print("SaveTokenEmbeddings: Error: No unweighted embeddings generated.")
             return {"ui": {"text": ["Error: No unweighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveTokenEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveTokenEmbeddings: Saving unweighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved unweighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveTokenEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveTokenEmbeddings: Saving unweighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved unweighted to {', '.join(saved_paths)}"]}}
 
 
 class SaveWeightedEmbeddings:
@@ -368,6 +390,7 @@ class SaveWeightedEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "weighted_embed"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -376,7 +399,7 @@ class SaveWeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -530,28 +553,49 @@ class SaveWeightedEmbeddings:
             print("SaveWeightedEmbeddings: Error: No weighted embeddings generated.")
             return {"ui": {"text": ["Error: No weighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveWeightedEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveWeightedEmbeddings: Saving weighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved weighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveWeightedEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveWeightedEmbeddings: Saving weighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved weighted to {', '.join(saved_paths)}"]}}
 
 class SaveA1111WeightedEmbeddings:
     def __init__(self):
@@ -568,6 +612,7 @@ class SaveA1111WeightedEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "a1111_weighted_embed"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -576,7 +621,7 @@ class SaveA1111WeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_a1111_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_a1111_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
@@ -707,28 +752,49 @@ class SaveA1111WeightedEmbeddings:
             print("SaveA1111WeightedEmbeddings: Error: No A1111-style weighted embeddings generated.")
             return {"ui": {"text": ["Error: No A1111-style weighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveA1111WeightedEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveA1111WeightedEmbeddings: Saving A1111-style weighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved A1111-style weighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveA1111WeightedEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveA1111WeightedEmbeddings: Saving A1111-style weighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved A1111-style weighted to {', '.join(saved_paths)}"]}}
 
 
 class SliceExistingEmbedding:
@@ -834,28 +900,39 @@ class SliceExistingEmbedding:
 
         subfolder_in_prefix, filename_base_from_prefix = os.path.split(output_filename_prefix)
 
+        keys = sorted([k for k in sliced_tensors.keys() if k != "__metadata__"])
+        if keys:
+            filename_base_from_prefix = f"{'_'.join(keys)}_{filename_base_from_prefix}"
+
         output_target_folder = os.path.join(self.primary_embeddings_dir, subfolder_in_prefix)
         os.makedirs(output_target_folder, exist_ok=True)
 
         _, input_ext = os.path.splitext(embedding_file)
         output_ext = input_ext if input_ext.lower() in [".safetensors", ".pt"] else ".safetensors"
 
-        counter = 1
-        max_counter = 99999
         final_save_path = ""
-        while True:
-            save_filename_numbered = f"{filename_base_from_prefix}_{counter:05}{output_ext}"
-            current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
 
-            if not os.path.exists(current_save_path_candidate):
-                final_save_path = current_save_path_candidate
-                break
+        save_filename_numbered = f"{filename_base_from_prefix}{output_ext}"
+        current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
 
-            counter += 1
-            if counter > max_counter:
-                msg = f"Max file attempts for {output_filename_prefix}. Please check your embeddings folder or prefix."
-                print(f"SliceExistingEmbedding: {msg}")
-                return {"ui": {"text": [f"Error: {msg}"]}}
+        if not os.path.exists(current_save_path_candidate):
+            final_save_path = current_save_path_candidate
+        else:
+            counter = 1
+            max_counter = 99999
+            while True:
+                save_filename_numbered = f"{filename_base_from_prefix}_{counter:05}{output_ext}"
+                current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
+
+                if not os.path.exists(current_save_path_candidate):
+                    final_save_path = current_save_path_candidate
+                    break
+
+                counter += 1
+                if counter > max_counter:
+                    msg = f"Max file attempts for {output_filename_prefix}. Please check your embeddings folder or prefix."
+                    print(f"SliceExistingEmbedding: {msg}")
+                    return {"ui": {"text": [f"Error: {msg}"]}}
 
         try:
             if file_metadata:
