@@ -5,7 +5,6 @@ import comfy.utils
 import logging
 import re
 from comfy.sd1_clip import token_weights, escape_important, unescape_important
-from .nodes_debug import PromptEmbeddingFixer, InspectEmbeddingForClip
 
 def tokenize_preserving_weights(clip, text):
     """
@@ -876,8 +875,6 @@ NODE_CLASS_MAPPINGS = {
     "SaveWeightedEmbeddings": SaveWeightedEmbeddings,
     "SaveA1111WeightedEmbeddings": SaveA1111WeightedEmbeddings,
     "SliceExistingEmbedding": SliceExistingEmbedding,
-    "PromptEmbeddingFixer": PromptEmbeddingFixer,
-    "InspectEmbeddingForClip": InspectEmbeddingForClip,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -885,8 +882,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SaveWeightedEmbeddings": "Save Weighted Embeddings",
     "SaveA1111WeightedEmbeddings": "Save A1111-style Weighted Embeddings",
     "SliceExistingEmbedding": "Slice Existing Embedding File",
-    "PromptEmbeddingFixer": "Prompt Embedding Fixer",
-    "InspectEmbeddingForClip": "Inspect Embedding For Clip",
 }
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
