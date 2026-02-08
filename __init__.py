@@ -34,6 +34,17 @@ def tokenize_preserving_weights(clip, text):
     
     found_any = False
     
+    # Try standard tokenization first to get a baseline for all parts
+    # This ensures we don't lose parts that we can't manually tokenize
+    try:
+        # Some tokenizers might not support llama_template, so we try with and without
+        try:
+            out = clip.tokenize(text, llama_template="{}")
+        except TypeError:
+            out = clip.tokenize(text)
+    except Exception:
+        out = {}
+    
     for attr in potential_parts:
         if hasattr(tokenizer, attr):
             sub_tok = getattr(tokenizer, attr)
@@ -188,7 +199,14 @@ def tokenize_preserving_weights(clip, text):
                     import traceback
                     traceback.print_exc()
 
-    if not found_any:
+    # If manual tokenization was attempted and succeeded for at least one part,
+    # 'out' now contains a mix of standard tokenization (for skipped parts)
+    # and manual tokenization (for parts that needed weight preservation).
+    # If no manual tokenization happened, we rely entirely on the initial clip.tokenize result.
+    
+    if not found_any and not out:
+        # If both failed (e.g. clip.tokenize failed earlier and no manual parts found)
+        # Try one last time or return empty
         return clip.tokenize(text, llama_template="{}")
         
     return out
