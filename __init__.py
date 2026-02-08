@@ -5,6 +5,7 @@ import comfy.utils
 import logging
 import re
 from comfy.sd1_clip import token_weights, escape_important, unescape_important
+from .nodes_debug import PromptEmbeddingFixer, InspectEmbeddingForClip
 
 def tokenize_preserving_weights(clip, text):
     """
@@ -32,6 +33,17 @@ def tokenize_preserving_weights(clip, text):
             potential_parts.append(tokenizer.clip)
     
     found_any = False
+    
+    # Try standard tokenization first to get a baseline for all parts
+    # This ensures we don't lose parts that we can't manually tokenize
+    try:
+        # Some tokenizers might not support llama_template, so we try with and without
+        try:
+            out = clip.tokenize(text, llama_template="{}")
+        except TypeError:
+            out = clip.tokenize(text)
+    except Exception:
+        out = {}
     
     for attr in potential_parts:
         if hasattr(tokenizer, attr):
@@ -187,7 +199,14 @@ def tokenize_preserving_weights(clip, text):
                     import traceback
                     traceback.print_exc()
 
-    if not found_any:
+    # If manual tokenization was attempted and succeeded for at least one part,
+    # 'out' now contains a mix of standard tokenization (for skipped parts)
+    # and manual tokenization (for parts that needed weight preservation).
+    # If no manual tokenization happened, we rely entirely on the initial clip.tokenize result.
+    
+    if not found_any and not out:
+        # If both failed (e.g. clip.tokenize failed earlier and no manual parts found)
+        # Try one last time or return empty
         return clip.tokenize(text, llama_template="{}")
         
     return out
@@ -875,6 +894,8 @@ NODE_CLASS_MAPPINGS = {
     "SaveWeightedEmbeddings": SaveWeightedEmbeddings,
     "SaveA1111WeightedEmbeddings": SaveA1111WeightedEmbeddings,
     "SliceExistingEmbedding": SliceExistingEmbedding,
+    "PromptEmbeddingFixer": PromptEmbeddingFixer,
+    "InspectEmbeddingForClip": InspectEmbeddingForClip,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -882,6 +903,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SaveWeightedEmbeddings": "Save Weighted Embeddings",
     "SaveA1111WeightedEmbeddings": "Save A1111-style Weighted Embeddings",
     "SliceExistingEmbedding": "Slice Existing Embedding File",
+    "PromptEmbeddingFixer": "Prompt Embedding Fixer",
+    "InspectEmbeddingForClip": "Inspect Embedding For Clip",
 }
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
