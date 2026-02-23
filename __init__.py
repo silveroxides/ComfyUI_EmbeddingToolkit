@@ -37,7 +37,7 @@ class SaveTokenEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -190,7 +190,7 @@ class SaveWeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -381,7 +381,7 @@ class SaveA1111WeightedEmbeddings:
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b'}
+        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
