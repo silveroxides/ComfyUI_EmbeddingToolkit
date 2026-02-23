@@ -2,6 +2,195 @@ import torch
 import os
 import folder_paths
 import comfy.utils
+import logging
+import re
+from comfy.sd1_clip import token_weights, escape_important, unescape_important
+
+def tokenize_preserving_weights(clip, text):
+    """
+    Custom tokenizer helper that bypasses 'disable_weights=True' enforced by some
+    tokenizers (e.g., Flux/Mistral/Qwen) by manually implementing the tokenization loop
+    and weight parsing, ensuring weights are always respected.
+    """
+    tokenizer = clip.tokenizer
+    out = {}
+    
+    potential_parts = [
+        'clip_l', 'clip_g', 'clip_h',
+        't5xxl', 't5xl', 't5base', 'pile_t5xl', 'umt5xxl',
+        'qwen25_7b', 'qwen25_3b', 'qwen3_4b', 'qwen3_8b', 'qwen3_2b', 'qwen3_06b',
+        'mistral3_24b',
+        'gemma2_2b', 'gemma3_4b', 'gemma3_12b',
+        'jina_clip_2', 'gemma', 'jina', 'byt5_small',
+        'llama'
+    ]
+
+    # Dynamic discovery for SD1Tokenizer subclasses (like Flux2, Klein)
+    # which store the sub-tokenizer attribute name in 'self.clip'
+    if hasattr(tokenizer, "clip") and isinstance(tokenizer.clip, str):
+        if tokenizer.clip not in potential_parts:
+            potential_parts.append(tokenizer.clip)
+    
+    found_any = False
+    
+    for attr in potential_parts:
+        if hasattr(tokenizer, attr):
+            sub_tok = getattr(tokenizer, attr)
+            
+            # Check for essential attributes to perform manual tokenization
+            if hasattr(sub_tok, "tokenizer") and hasattr(sub_tok, "tokens_start"):
+                try:
+                    # Manual parsing to ensure weights are respected
+                    # We skip the 'disable_weights' check entirely by implementing the logic ourselves
+                    
+                    # 1. Parse weights
+                    text_processed = escape_important(text)
+                    parsed_weights = token_weights(text_processed, 1.0)
+                    
+                    # 2. Tokenize segments
+                    tokens = []
+                    embedding_identifier = getattr(sub_tok, "embedding_identifier", "embedding:")
+                    embedding_directory = getattr(sub_tok, "embedding_directory", None)
+                    
+                    for weighted_segment, weight in parsed_weights:
+                        to_tokenize = unescape_important(weighted_segment)
+                        
+                        # Handle embeddings (copied from SDTokenizer logic)
+                        split = re.split(' {0}|\n{0}'.format(embedding_identifier), to_tokenize)
+                        to_tokenize_list = [split[0]]
+                        for i in range(1, len(split)):
+                            to_tokenize_list.append("{}{}".format(embedding_identifier, split[i]))
+                        to_tokenize_list = [x for x in to_tokenize_list if x != ""]
+                        
+                        for word in to_tokenize_list:
+                            # Embedding check
+                            if word.startswith(embedding_identifier) and embedding_directory is not None:
+                                if hasattr(sub_tok, "_try_get_embedding"):
+                                    embedding_name = word[len(embedding_identifier):].strip('\n')
+                                    embed, leftover = sub_tok._try_get_embedding(embedding_name)
+                                    if embed is None:
+                                        logging.warning(f"EmbeddingToolkit: warning, embedding:{embedding_name} does not exist, ignoring")
+                                    else:
+                                        if len(embed.shape) == 1:
+                                            tokens.append([(embed, weight)])
+                                        else:
+                                            tokens.append([(embed[x], weight) for x in range(embed.shape[0])])
+                                    
+                                    if leftover != "":
+                                        word = leftover
+                                    else:
+                                        continue
+                            
+                            # Tokenize
+                            end = 999999999999
+                            if getattr(sub_tok, "tokenizer_adds_end_token", False):
+                                end = -1
+                            
+                            start = getattr(sub_tok, "tokens_start", 0)
+                            
+                            # HF Tokenizer call
+                            hf_tokens = sub_tok.tokenizer(word)["input_ids"]
+                            
+                            # Slice
+                            sliced = hf_tokens[start:end] if end != 999999999999 else hf_tokens[start:]
+                            
+                            tokens.append([(t, weight) for t in sliced])
+
+                    # 3. Batching (replicating SDTokenizer logic)
+                    batched_tokens = []
+                    batch = []
+                    
+                    start_token = getattr(sub_tok, "start_token", None)
+                    end_token = getattr(sub_tok, "end_token", None)
+                    pad_token = getattr(sub_tok, "pad_token", 0)
+                    max_length = getattr(sub_tok, "max_length", 77)
+                    max_word_length = getattr(sub_tok, "max_word_length", 8)
+                    pad_to_max_length = getattr(sub_tok, "pad_to_max_length", True)
+                    min_length = getattr(sub_tok, "min_length", None)
+                    min_padding = getattr(sub_tok, "min_padding", None)
+                    pad_left = getattr(sub_tok, "pad_left", False) # Mistral uses left padding!
+                    
+                    if start_token is not None:
+                        batch.append((start_token, 1.0, 0))
+                        
+                    for i, t_group in enumerate(tokens):
+                        is_large = len(t_group) >= max_word_length
+                        has_end_token = 1 if end_token is not None else 0
+                        
+                        while len(t_group) > 0:
+                            if len(t_group) + len(batch) > max_length - has_end_token:
+                                remaining_length = max_length - len(batch) - has_end_token
+                                if is_large:
+                                    batch.extend([(t,w,i+1) for t,w in t_group[:remaining_length]])
+                                    if end_token is not None:
+                                        batch.append((end_token, 1.0, 0))
+                                    t_group = t_group[remaining_length:]
+                                else:
+                                    if end_token is not None:
+                                        batch.append((end_token, 1.0, 0))
+                                    # Padding
+                                    if pad_to_max_length:
+                                        pad_amt = max_length - len(batch)
+                                        if pad_left:
+                                             for _ in range(pad_amt): batch.insert(0, (pad_token, 1.0, 0))
+                                        else:
+                                             batch.extend([(pad_token, 1.0, 0)] * pad_amt)
+                                
+                                batched_tokens.append(batch)
+                                batch = []
+                                if start_token is not None:
+                                    batch.append((start_token, 1.0, 0))
+                            else:
+                                batch.extend([(t,w,i+1) for t,w in t_group])
+                                t_group = []
+                    
+                    # Last batch
+                    if end_token is not None:
+                        batch.append((end_token, 1.0, 0))
+                    
+                    # Min padding
+                    if min_padding is not None:
+                        pad_amt = min_padding
+                        if pad_left:
+                             for _ in range(pad_amt): batch.insert(0, (pad_token, 1.0, 0))
+                        else:
+                             batch.extend([(pad_token, 1.0, 0)] * pad_amt)
+                             
+                    # Pad to max
+                    if pad_to_max_length and len(batch) < max_length:
+                        pad_amt = max_length - len(batch)
+                        if pad_left:
+                             for _ in range(pad_amt): batch.insert(0, (pad_token, 1.0, 0))
+                        else:
+                             batch.extend([(pad_token, 1.0, 0)] * pad_amt)
+                             
+                    # Min length
+                    if min_length is not None and len(batch) < min_length:
+                        pad_amt = min_length - len(batch)
+                        if pad_left:
+                             for _ in range(pad_amt): batch.insert(0, (pad_token, 1.0, 0))
+                        else:
+                             batch.extend([(pad_token, 1.0, 0)] * pad_amt)
+                    
+                    batched_tokens.append(batch)
+                    
+                    # Map key
+                    key = attr
+                    if attr.startswith("clip_") and len(attr) == 6:
+                        key = attr[5:]
+                        
+                    out[key] = batched_tokens
+                    found_any = True
+                    
+                except Exception as e:
+                    print(f"EmbeddingToolkit: Error manually tokenizing for '{attr}': {e}")
+                    import traceback
+                    traceback.print_exc()
+
+    if not found_any:
+        return clip.tokenize(text, llama_template="{}")
+        
+    return out
 
 class SaveTokenEmbeddings:
     def __init__(self):
@@ -18,6 +207,7 @@ class SaveTokenEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "token_embeds"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -26,18 +216,26 @@ class SaveTokenEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_token_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_token_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
             print("SaveTokenEmbeddings: Error: clip.cond_stage_model is None.")
             return {"ui": {"text": ["Error: CLIP's cond_stage_model is None."]}}
 
-        tokenized_text_with_weights = clip.tokenize(text)
+        tokenized_text_with_weights = clip.tokenize(text, llama_template="{}")
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
+        potential_clip_parts = {
+            'l': 'clip_l', 'g': 'clip_g', 'h': 'clip_h',
+            'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base',
+            'qwen25_7b': 'qwen25_7b', 'qwen25_3b': 'qwen25_3b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_2b': 'qwen3_2b', 'qwen3_06b': 'qwen3_06b',
+            'mistral3_24b': 'mistral3_24b',
+            'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b', 'gemma3_12b': 'gemma3_12b',
+            'jina_clip_2': 'jina_clip_2', 'gemma': 'gemma', 'jina': 'jina', 'byt5': 'byt5_small',
+            'llama': 'llama',
+        }
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -120,7 +318,7 @@ class SaveTokenEmbeddings:
                 print(f"SaveTokenEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma') or key_suffix.startswith('jina') or key_suffix.startswith('byt5') or key_suffix.startswith('llama'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -132,28 +330,49 @@ class SaveTokenEmbeddings:
             print("SaveTokenEmbeddings: Error: No unweighted embeddings generated.")
             return {"ui": {"text": ["Error: No unweighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveTokenEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveTokenEmbeddings: Saving unweighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved unweighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveTokenEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveTokenEmbeddings: Saving unweighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved unweighted to {', '.join(saved_paths)}"]}}
 
 
 class SaveWeightedEmbeddings:
@@ -171,6 +390,7 @@ class SaveWeightedEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "weighted_embed"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -179,18 +399,27 @@ class SaveWeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
             print("SaveWeightedEmbeddings: Error: clip.cond_stage_model is None.")
             return {"ui": {"text": ["Error: CLIP's cond_stage_model is None."]}}
 
-        tokenized_text_with_weights = clip.tokenize(text)
+        # Use custom tokenizer to ensure we get weights even for Flux/Mistral/Qwen
+        tokenized_text_with_weights = tokenize_preserving_weights(clip, text)
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
+        potential_clip_parts = {
+            'l': 'clip_l', 'g': 'clip_g', 'h': 'clip_h',
+            'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base',
+            'qwen25_7b': 'qwen25_7b', 'qwen25_3b': 'qwen25_3b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_2b': 'qwen3_2b', 'qwen3_06b': 'qwen3_06b',
+            'mistral3_24b': 'mistral3_24b',
+            'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b', 'gemma3_12b': 'gemma3_12b',
+            'jina_clip_2': 'jina_clip_2', 'gemma': 'gemma', 'jina': 'jina', 'byt5': 'byt5_small',
+            'llama': 'llama',
+        }
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -312,7 +541,7 @@ class SaveWeightedEmbeddings:
                 print(f"SaveWeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma') or key_suffix.startswith('jina') or key_suffix.startswith('byt5') or key_suffix.startswith('llama'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -324,28 +553,49 @@ class SaveWeightedEmbeddings:
             print("SaveWeightedEmbeddings: Error: No weighted embeddings generated.")
             return {"ui": {"text": ["Error: No weighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveWeightedEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveWeightedEmbeddings: Saving weighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved weighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveWeightedEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveWeightedEmbeddings: Saving weighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved weighted to {', '.join(saved_paths)}"]}}
 
 class SaveA1111WeightedEmbeddings:
     def __init__(self):
@@ -362,6 +612,7 @@ class SaveA1111WeightedEmbeddings:
                 "text": ("STRING", {"multiline": True, "dynamicPrompts": True}),
                 "slice_bos_eos": ("BOOLEAN", {"default": False}),
                 "filename_prefix": ("STRING", {"default": "a1111_weighted_embed"}),
+                "split_by_model": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -370,18 +621,27 @@ class SaveA1111WeightedEmbeddings:
     OUTPUT_NODE = True
     CATEGORY = "EmbeddingToolkit"
 
-    def save_a1111_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix):
+    def save_a1111_weighted_embeddings(self, clip, text, slice_bos_eos, filename_prefix, split_by_model=False):
         if clip is None:
             raise RuntimeError("CLIP input is None.")
         if clip.cond_stage_model is None:
             print("SaveA1111WeightedEmbeddings: Error: clip.cond_stage_model is None.")
             return {"ui": {"text": ["Error: CLIP's cond_stage_model is None."]}}
 
-        tokenized_text_with_weights = clip.tokenize(text)
+        # Use custom tokenizer to ensure we get weights even for Flux/Mistral/Qwen
+        tokenized_text_with_weights = tokenize_preserving_weights(clip, text)
         actual_clip_model_wrapper = clip.cond_stage_model
 
         sd_clip_instances = {}
-        potential_clip_parts = {'l': 'clip_l', 'g': 'clip_g', 'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base', 'qwen25_7b': 'qwen25_7b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_06b': 'qwen3_06b'}
+        potential_clip_parts = {
+            'l': 'clip_l', 'g': 'clip_g', 'h': 'clip_h',
+            'pile_t5xl': 'pile_t5xl', 't5xl': 't5xl', 't5xxl': 't5xxl', 'umt5xxl': 'umt5xxl', 't5base': 't5base',
+            'qwen25_7b': 'qwen25_7b', 'qwen25_3b': 'qwen25_3b', 'qwen3_4b': 'qwen3_4b', 'qwen3_8b': 'qwen3_8b', 'qwen3_2b': 'qwen3_2b', 'qwen3_06b': 'qwen3_06b',
+            'mistral3_24b': 'mistral3_24b',
+            'gemma2_2b': 'gemma2_2b', 'gemma3_4b': 'gemma3_4b', 'gemma3_12b': 'gemma3_12b',
+            'jina_clip_2': 'jina_clip_2', 'gemma': 'gemma', 'jina': 'jina', 'byt5': 'byt5_small',
+            'llama': 'llama',
+        }
 
         for key_suffix, attr_name in potential_clip_parts.items():
             if hasattr(actual_clip_model_wrapper, attr_name):
@@ -480,7 +740,7 @@ class SaveA1111WeightedEmbeddings:
                 print(f"SaveA1111WeightedEmbeddings: Warning: No embeddings left for '{key_suffix}' after slicing. Skipping.")
                 continue
 
-            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen'):
+            if key_suffix.startswith('t5') or key_suffix.startswith('umt5') or key_suffix.startswith('pile') or key_suffix.startswith('qwen') or key_suffix.startswith('mistral') or key_suffix.startswith('gemma') or key_suffix.startswith('jina') or key_suffix.startswith('byt5') or key_suffix.startswith('llama'):
                 save_key_in_file = key_suffix
             else:
                 save_key_in_file = f"clip_{key_suffix}"
@@ -492,28 +752,49 @@ class SaveA1111WeightedEmbeddings:
             print("SaveA1111WeightedEmbeddings: Error: No A1111-style weighted embeddings generated.")
             return {"ui": {"text": ["Error: No A1111-style weighted embeddings generated."]}}
 
-        subfolder_in_prefix, filename_base = os.path.split(filename_prefix)
+        subfolder_in_prefix, filename_base_orig = os.path.split(filename_prefix)
         primary_output_dir = self.output_dir_list[0]
         full_output_folder = os.path.join(primary_output_dir, subfolder_in_prefix)
         if subfolder_in_prefix:
             os.makedirs(full_output_folder, exist_ok=True)
 
-        metadata = {}
-        counter = 1
-        max_counter = 99999
-        while True:
-            save_filename = f"{filename_base}_{counter:05}.safetensors"
-            save_path = os.path.join(full_output_folder, save_filename)
-            if not os.path.exists(save_path):
-                break
-            counter += 1
-            if counter > max_counter:
-                print(f"SaveA1111WeightedEmbeddings: Warning: Max file attempts for {filename_base}.")
-                return {"ui": {"text": [f"Error: Max files for {filename_base}"]}}
+        dicts_to_save = []
+        if split_by_model:
+            for key, tensor in tensors_to_save.items():
+                dicts_to_save.append({key: tensor})
+        else:
+            dicts_to_save.append(tensors_to_save)
 
-        print(f"SaveA1111WeightedEmbeddings: Saving A1111-style weighted to: {save_path}")
-        comfy.utils.save_torch_file(tensors_to_save, save_path, metadata=metadata)
-        return {"ui": {"text": [f"Saved A1111-style weighted to {save_path}"]}}
+        saved_paths = []
+        metadata = {}
+
+        for current_tensors in dicts_to_save:
+            keys = sorted(list(current_tensors.keys()))
+            current_filename_base = filename_base_orig
+            if keys:
+                current_filename_base = f"{'_'.join(keys)}_{filename_base_orig}"
+
+            save_filename = f"{current_filename_base}.safetensors"
+            save_path = os.path.join(full_output_folder, save_filename)
+
+            if os.path.exists(save_path):
+                counter = 1
+                max_counter = 99999
+                while True:
+                    save_filename = f"{current_filename_base}_{counter:05}.safetensors"
+                    save_path = os.path.join(full_output_folder, save_filename)
+                    if not os.path.exists(save_path):
+                        break
+                    counter += 1
+                    if counter > max_counter:
+                        print(f"SaveA1111WeightedEmbeddings: Warning: Max file attempts for {current_filename_base}.")
+                        return {"ui": {"text": [f"Error: Max files for {current_filename_base}"]}}
+
+            print(f"SaveA1111WeightedEmbeddings: Saving A1111-style weighted to: {save_path}")
+            comfy.utils.save_torch_file(current_tensors, save_path, metadata=metadata)
+            saved_paths.append(save_path)
+
+        return {"ui": {"text": [f"Saved A1111-style weighted to {', '.join(saved_paths)}"]}}
 
 
 class SliceExistingEmbedding:
@@ -619,28 +900,39 @@ class SliceExistingEmbedding:
 
         subfolder_in_prefix, filename_base_from_prefix = os.path.split(output_filename_prefix)
 
+        keys = sorted([k for k in sliced_tensors.keys() if k != "__metadata__"])
+        if keys:
+            filename_base_from_prefix = f"{'_'.join(keys)}_{filename_base_from_prefix}"
+
         output_target_folder = os.path.join(self.primary_embeddings_dir, subfolder_in_prefix)
         os.makedirs(output_target_folder, exist_ok=True)
 
         _, input_ext = os.path.splitext(embedding_file)
         output_ext = input_ext if input_ext.lower() in [".safetensors", ".pt"] else ".safetensors"
 
-        counter = 1
-        max_counter = 99999
         final_save_path = ""
-        while True:
-            save_filename_numbered = f"{filename_base_from_prefix}_{counter:05}{output_ext}"
-            current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
 
-            if not os.path.exists(current_save_path_candidate):
-                final_save_path = current_save_path_candidate
-                break
+        save_filename_numbered = f"{filename_base_from_prefix}{output_ext}"
+        current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
 
-            counter += 1
-            if counter > max_counter:
-                msg = f"Max file attempts for {output_filename_prefix}. Please check your embeddings folder or prefix."
-                print(f"SliceExistingEmbedding: {msg}")
-                return {"ui": {"text": [f"Error: {msg}"]}}
+        if not os.path.exists(current_save_path_candidate):
+            final_save_path = current_save_path_candidate
+        else:
+            counter = 1
+            max_counter = 99999
+            while True:
+                save_filename_numbered = f"{filename_base_from_prefix}_{counter:05}{output_ext}"
+                current_save_path_candidate = os.path.join(output_target_folder, save_filename_numbered)
+
+                if not os.path.exists(current_save_path_candidate):
+                    final_save_path = current_save_path_candidate
+                    break
+
+                counter += 1
+                if counter > max_counter:
+                    msg = f"Max file attempts for {output_filename_prefix}. Please check your embeddings folder or prefix."
+                    print(f"SliceExistingEmbedding: {msg}")
+                    return {"ui": {"text": [f"Error: {msg}"]}}
 
         try:
             if file_metadata:
